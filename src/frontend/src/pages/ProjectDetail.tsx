@@ -93,6 +93,7 @@ export function ProjectDetail({ id, navigate }: Props) {
       .catch(() => setLoading(false));
   };
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: load depends on actor and id
   useEffect(() => {
     load();
   }, [actor, id]);
@@ -141,11 +142,9 @@ export function ProjectDetail({ id, navigate }: Props) {
   if (loading)
     return (
       <div className="space-y-4">
-        {Array(3)
-          .fill(0)
-          .map((_, i) => (
-            <Skeleton key={i} className="h-20" />
-          ))}
+        {["a", "b", "c"].map((k) => (
+          <Skeleton key={k} className="h-20" />
+        ))}
       </div>
     );
   if (!project)

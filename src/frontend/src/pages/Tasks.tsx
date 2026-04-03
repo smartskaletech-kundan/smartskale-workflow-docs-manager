@@ -76,6 +76,7 @@ export function Tasks({ navigate: _navigate }: Props) {
       .catch(() => setLoading(false));
   };
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: load depends on actor
   useEffect(() => {
     load();
   }, [actor]);
@@ -213,11 +214,9 @@ export function Tasks({ navigate: _navigate }: Props) {
 
       {loading ? (
         <div className="space-y-2">
-          {Array(5)
-            .fill(0)
-            .map((_, i) => (
-              <Skeleton key={i} className="h-14" />
-            ))}
+          {["a", "b", "c", "d", "e"].map((k) => (
+            <Skeleton key={k} className="h-14" />
+          ))}
         </div>
       ) : filtered.length === 0 ? (
         <div className="text-center py-20">
@@ -247,7 +246,7 @@ export function Tasks({ navigate: _navigate }: Props) {
                 <th className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase">
                   Created
                 </th>
-                <th className="px-4 py-3"></th>
+                <th className="px-4 py-3" />
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">

@@ -1,24 +1,13 @@
 import {
-  Activity as ActivityIcon,
-  CheckCheck,
+  BarChart3,
   CheckSquare,
-  Clock,
   FolderKanban,
   Plus,
   TrendingUp,
 } from "lucide-react";
 import { useEffect, useState } from "react";
-import {
-  Bar,
-  BarChart,
-  Cell,
-  ResponsiveContainer,
-  Tooltip,
-  XAxis,
-  YAxis,
-} from "recharts";
 import type { Page } from "../App";
-import type { Activity, DashboardStats } from "../backend";
+import type { DashboardStats, Project } from "../backend";
 import { Button } from "../components/ui/button";
 import {
   Card,
@@ -26,80 +15,107 @@ import {
   CardHeader,
   CardTitle,
 } from "../components/ui/card";
+import { Progress } from "../components/ui/progress";
 import { Skeleton } from "../components/ui/skeleton";
 import { useActor } from "../hooks/useActor";
+
+function timeAgo(nanoseconds: bigint): string {
+  const ms = Number(nanoseconds) / 1_000_000;
+  const diff = Date.now() - ms;
+  const mins = Math.floor(diff / 60000);
+  if (mins < 1) return "just now";
+  if (mins < 60) return `${mins}m ago`;
+  const hrs = Math.floor(mins / 60);
+  if (hrs < 24) return `${hrs}h ago`;
+  return `${Math.floor(hrs / 24)}d ago`;
+}
+
+function getKey(obj: unknown): string {
+  return Object.keys(obj as object)[0];
+}
 
 interface Props {
   navigate: (p: Page) => void;
 }
 
+const MetricCard = ({
+  title,
+  value,
+  subtitle,
+  icon: Icon,
+  color,
+}: {
+  title: string;
+  value: string | number;
+  subtitle?: string;
+  icon: React.ElementType;
+  color: string;
+}) => (
+  <Card className="border-0 shadow-sm">
+    <CardContent className="p-5">
+      <div className="flex items-start justify-between">
+        <div>
+          <p className="text-sm text-slate-500 font-medium">{title}</p>
+          <p className="text-3xl font-bold text-slate-900 mt-1">{value}</p>
+          {subtitle && (
+            <p className="text-xs text-slate-400 mt-1">{subtitle}</p>
+          )}
+        </div>
+        <div className={`p-2.5 rounded-lg ${color}`}>
+          <Icon className="h-5 w-5 text-white" />
+        </div>
+      </div>
+    </CardContent>
+  </Card>
+);
+
 export function Dashboard({ navigate }: Props) {
   const { actor } = useActor();
   const [stats, setStats] = useState<DashboardStats | null>(null);
+  const [projects, setProjects] = useState<Project[]>([]);
+  const [allTasks, setAllTasks] = useState<
+    { projectId: string; done: boolean }[]
+  >([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     if (!actor) return;
-    actor
-      .getDashboardStats()
-      .then((s) => {
+    Promise.all([
+      actor.getDashboardStats(),
+      actor.getProjects(),
+      actor.getTasks(),
+    ])
+      .then(([s, p, t]) => {
         setStats(s);
+        setProjects(p);
+        setAllTasks(
+          t.map((task) => ({
+            projectId: task.projectId,
+            done: getKey(task.status) === "DONE",
+          })),
+        );
         setLoading(false);
       })
       .catch(() => setLoading(false));
   }, [actor]);
 
-  const chartData = stats
-    ? [
-        { name: "TODO", value: Number(stats.todoCount), color: "#64748b" },
-        {
-          name: "In Progress",
-          value: Number(stats.inProgressCount),
-          color: "#3b82f6",
-        },
-        {
-          name: "In Review",
-          value: Number(stats.inReviewCount),
-          color: "#f59e0b",
-        },
-        { name: "Done", value: Number(stats.doneCount), color: "#22c55e" },
-      ]
-    : [];
+  if (loading) {
+    return (
+      <div className="space-y-6">
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+          {["a", "b", "c", "d"].map((k) => (
+            <Skeleton key={k} className="h-28" />
+          ))}
+        </div>
+        <Skeleton className="h-64" />
+      </div>
+    );
+  }
 
-  const statCards = [
-    {
-      title: "Total Projects",
-      value: stats ? Number(stats.totalProjects) : 0,
-      icon: FolderKanban,
-      color: "text-blue-500",
-      bg: "bg-blue-50",
-    },
-    {
-      title: "Total Tasks",
-      value: stats ? Number(stats.totalTasks) : 0,
-      icon: CheckSquare,
-      color: "text-purple-500",
-      bg: "bg-purple-50",
-    },
-    {
-      title: "In Progress",
-      value: stats ? Number(stats.inProgressCount) : 0,
-      icon: Clock,
-      color: "text-amber-500",
-      bg: "bg-amber-50",
-    },
-    {
-      title: "Completed",
-      value: stats ? Number(stats.doneCount) : 0,
-      icon: CheckCheck,
-      color: "text-green-500",
-      bg: "bg-green-50",
-    },
-  ];
-
-  const formatTime = (ts: bigint) => {
-    return new Date(Number(ts) / 1_000_000).toLocaleString();
-  };
+  const totalProjects = Number(stats?.totalProjects ?? 0);
+  const totalTasks = Number(stats?.totalTasks ?? 0);
+  const inProgress = Number(stats?.inProgressCount ?? 0);
+  const done = Number(stats?.doneCount ?? 0);
 
   return (
     <div className="space-y-6">
@@ -110,111 +126,136 @@ export function Dashboard({ navigate }: Props) {
             Overview of your workspace
           </p>
         </div>
-        <div className="flex gap-2">
-          <Button
-            size="sm"
-            variant="outline"
-            onClick={() => navigate({ name: "projects" })}
-          >
-            <Plus className="h-4 w-4 mr-1" /> New Project
-          </Button>
-          <Button size="sm" onClick={() => navigate({ name: "tasks" })}>
-            <Plus className="h-4 w-4 mr-1" /> New Task
-          </Button>
-        </div>
+        <Button onClick={() => navigate({ name: "projects" })}>
+          <Plus className="h-4 w-4 mr-1" /> New Project
+        </Button>
       </div>
 
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-        {statCards.map(({ title, value, icon: Icon, color, bg }) => (
-          <Card key={title} className="border-0 shadow-sm">
-            <CardContent className="p-5">
-              <div className="flex items-center gap-3">
-                <div className={`${bg} rounded-xl p-2.5`}>
-                  <Icon className={`h-5 w-5 ${color}`} />
-                </div>
-                <div>
-                  {loading ? (
-                    <Skeleton className="h-7 w-12 mb-1" />
-                  ) : (
-                    <div className="text-2xl font-bold text-slate-900">
-                      {value}
-                    </div>
-                  )}
-                  <div className="text-xs text-slate-500 font-medium">
-                    {title}
-                  </div>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-        ))}
+      {/* Metrics */}
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+        <MetricCard
+          title="Total Projects"
+          value={totalProjects}
+          subtitle="All workspaces"
+          icon={FolderKanban}
+          color="bg-blue-600"
+        />
+        <MetricCard
+          title="Total Tasks"
+          value={totalTasks}
+          subtitle="Across all projects"
+          icon={CheckSquare}
+          color="bg-violet-600"
+        />
+        <MetricCard
+          title="In Progress"
+          value={inProgress}
+          subtitle="Active tasks"
+          icon={TrendingUp}
+          color="bg-amber-500"
+        />
+        <MetricCard
+          title="Completed"
+          value={done}
+          subtitle="Done tasks"
+          icon={BarChart3}
+          color="bg-green-600"
+        />
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        {/* Project Progress */}
         <Card className="border-0 shadow-sm">
-          <CardHeader className="pb-2">
-            <CardTitle className="text-base flex items-center gap-2">
-              <TrendingUp className="h-4 w-4 text-blue-500" />
-              Task Status Distribution
+          <CardHeader className="pb-3">
+            <CardTitle className="text-base font-semibold">
+              Project Progress
             </CardTitle>
           </CardHeader>
-          <CardContent>
-            {loading ? (
-              <Skeleton className="h-48" />
+          <CardContent className="space-y-4">
+            {projects.length === 0 ? (
+              <div className="text-center py-8">
+                <FolderKanban className="h-10 w-10 text-slate-200 mx-auto mb-2" />
+                <p className="text-slate-400 text-sm">No projects yet</p>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="mt-3"
+                  onClick={() => navigate({ name: "projects" })}
+                >
+                  Create your first project
+                </Button>
+              </div>
             ) : (
-              <ResponsiveContainer width="100%" height={200}>
-                <BarChart data={chartData}>
-                  <XAxis dataKey="name" tick={{ fontSize: 11 }} />
-                  <YAxis tick={{ fontSize: 11 }} />
-                  <Tooltip />
-                  <Bar dataKey="value" radius={[4, 4, 0, 0]}>
-                    {chartData.map((entry, i) => (
-                      <Cell key={i} fill={entry.color} />
-                    ))}
-                  </Bar>
-                </BarChart>
-              </ResponsiveContainer>
+              projects.slice(0, 6).map((p) => {
+                const pTasks = allTasks.filter((t) => t.projectId === p.id);
+                const pct =
+                  pTasks.length > 0
+                    ? Math.round(
+                        (pTasks.filter((t) => t.done).length / pTasks.length) *
+                          100,
+                      )
+                    : 0;
+                return (
+                  <button
+                    key={p.id}
+                    type="button"
+                    className="space-y-1.5 cursor-pointer w-full text-left bg-transparent border-0 p-0"
+                    onClick={() =>
+                      navigate({ name: "project-detail", id: p.id })
+                    }
+                  >
+                    <div className="flex items-center justify-between">
+                      <span className="text-sm font-medium text-slate-700 truncate max-w-[200px]">
+                        {p.name}
+                      </span>
+                      <span className="text-xs text-slate-500 shrink-0 ml-2">
+                        {pct}%
+                      </span>
+                    </div>
+                    <Progress value={pct} className="h-1.5" />
+                    <p className="text-xs text-slate-400">
+                      {pTasks.filter((t) => t.done).length} / {pTasks.length}{" "}
+                      tasks done
+                    </p>
+                  </button>
+                );
+              })
             )}
           </CardContent>
         </Card>
 
+        {/* Recent Activity */}
         <Card className="border-0 shadow-sm">
-          <CardHeader className="pb-2">
-            <CardTitle className="text-base flex items-center gap-2">
-              <ActivityIcon className="h-4 w-4 text-blue-500" />
+          <CardHeader className="pb-3">
+            <CardTitle className="text-base font-semibold">
               Recent Activity
             </CardTitle>
           </CardHeader>
           <CardContent>
-            {loading ? (
-              <div className="space-y-3">
-                {Array(4)
-                  .fill(0)
-                  .map((_, i) => (
-                    <Skeleton key={i} className="h-10" />
-                  ))}
-              </div>
-            ) : !stats?.recentActivities.length ? (
-              <div className="text-center py-8 text-slate-400 text-sm">
-                No activity yet. Start by creating a project!
+            {!stats || stats.recentActivities.length === 0 ? (
+              <div className="text-center py-8">
+                <BarChart3 className="h-10 w-10 text-slate-200 mx-auto mb-2" />
+                <p className="text-slate-400 text-sm">No activity yet</p>
               </div>
             ) : (
-              <div className="space-y-2">
-                {stats.recentActivities.map((a: Activity, i: number) => (
-                  <div
-                    key={i}
-                    className="flex items-start gap-3 p-2.5 rounded-lg hover:bg-slate-50 transition-colors"
-                  >
-                    <div className="bg-blue-100 rounded-full p-1.5 mt-0.5">
-                      <ActivityIcon className="h-3 w-3 text-blue-600" />
+              <div className="space-y-3">
+                {stats.recentActivities.map((a) => (
+                  <div key={a.id} className="flex items-start gap-3">
+                    <div className="h-7 w-7 rounded-full bg-slate-100 flex items-center justify-center text-xs font-bold text-slate-600 shrink-0 mt-0.5">
+                      {a.actorId.toString().charAt(0).toUpperCase()}
                     </div>
                     <div className="flex-1 min-w-0">
-                      <div className="text-sm text-slate-700 font-medium">
-                        {a.action} {a.entityType.toLowerCase()}
-                      </div>
-                      <div className="text-xs text-slate-400">
-                        {formatTime(a.timestamp)}
-                      </div>
+                      <p className="text-sm text-slate-700">
+                        <span className="font-medium capitalize">
+                          {a.action.toLowerCase()}
+                        </span>{" "}
+                        <span className="text-slate-500 capitalize">
+                          {a.entityType.toLowerCase()}
+                        </span>
+                      </p>
+                      <p className="text-xs text-slate-400">
+                        {timeAgo(a.timestamp)}
+                      </p>
                     </div>
                   </div>
                 ))}
@@ -222,40 +263,6 @@ export function Dashboard({ navigate }: Props) {
             )}
           </CardContent>
         </Card>
-      </div>
-
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        {[
-          {
-            label: "New Project",
-            desc: "Start a new project",
-            page: "projects" as const,
-            color: "border-blue-200 hover:border-blue-400",
-          },
-          {
-            label: "New Task",
-            desc: "Add a task",
-            page: "tasks" as const,
-            color: "border-purple-200 hover:border-purple-400",
-          },
-          {
-            label: "New Document",
-            desc: "Write a document",
-            page: "documents" as const,
-            color: "border-green-200 hover:border-green-400",
-          },
-        ].map(({ label, desc, page, color }) => (
-          <button
-            key={label}
-            onClick={() => navigate({ name: page })}
-            className={`p-5 rounded-xl border-2 border-dashed ${color} text-left transition-all bg-white hover:shadow-sm group`}
-          >
-            <div className="flex items-center gap-2 text-slate-700 font-semibold group-hover:text-slate-900">
-              <Plus className="h-4 w-4" /> {label}
-            </div>
-            <div className="text-sm text-slate-400 mt-1">{desc}</div>
-          </button>
-        ))}
       </div>
     </div>
   );

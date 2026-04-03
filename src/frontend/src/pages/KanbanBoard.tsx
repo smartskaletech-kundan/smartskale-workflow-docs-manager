@@ -99,6 +99,7 @@ export function KanbanBoard({ projectId, navigate }: Props) {
       .catch(() => setLoading(false));
   };
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: load depends on actor and projectId
   useEffect(() => {
     load();
   }, [actor, projectId]);
