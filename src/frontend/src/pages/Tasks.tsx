@@ -1,4 +1,4 @@
-import { CheckSquare, Edit2, Plus, Trash2 } from "lucide-react";
+import { ArrowLeftRight, CheckSquare, Edit2, Plus, Trash2 } from "lucide-react";
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import type { Page } from "../App";
@@ -14,6 +14,7 @@ import {
 } from "../components/ui/dialog";
 import { Input } from "../components/ui/input";
 import { Label } from "../components/ui/label";
+import { Progress } from "../components/ui/progress";
 import {
   Select,
   SelectContent,
@@ -22,12 +23,15 @@ import {
   SelectValue,
 } from "../components/ui/select";
 import { Skeleton } from "../components/ui/skeleton";
+import { Slider } from "../components/ui/slider";
 import { Textarea } from "../components/ui/textarea";
 import { useActor } from "../hooks/useActor";
 
 interface Props {
   navigate: (p: Page) => void;
 }
+
+const STATUS_ORDER = ["TODO", "IN_PROGRESS", "IN_REVIEW", "DONE"] as const;
 
 const statusColors: Record<string, string> = {
   TODO: "bg-slate-100 text-slate-700",
@@ -46,6 +50,25 @@ function getKey(obj: unknown): string {
   return Object.keys(obj as object)[0];
 }
 
+const COMPLETION_KEY = "smartskale_task_completion";
+
+function getCompletions(): Record<string, number> {
+  try {
+    return JSON.parse(localStorage.getItem(COMPLETION_KEY) || "{}") as Record<
+      string,
+      number
+    >;
+  } catch {
+    return {};
+  }
+}
+
+function setCompletion(taskId: string, pct: number) {
+  const all = getCompletions();
+  all[taskId] = pct;
+  localStorage.setItem(COMPLETION_KEY, JSON.stringify(all));
+}
+
 export function Tasks({ navigate: _navigate }: Props) {
   const { actor } = useActor();
   const [tasks, setTasks] = useState<Task[]>([]);
@@ -59,11 +82,18 @@ export function Tasks({ navigate: _navigate }: Props) {
     projectId: "",
     status: "TODO",
     priority: "MEDIUM",
+    completion: 0,
   });
   const [saving, setSaving] = useState(false);
   const [filterStatus, setFilterStatus] = useState("ALL");
   const [filterPriority, setFilterPriority] = useState("ALL");
   const [search, setSearch] = useState("");
+  const [completions, setCompletions] = useState<Record<string, number>>({});
+
+  // Transfer state
+  const [transferTask, setTransferTask] = useState<Task | null>(null);
+  const [transferProjectId, setTransferProjectId] = useState("");
+  const [transferring, setTransferring] = useState(false);
 
   const load = () => {
     if (!actor) return;
@@ -71,6 +101,7 @@ export function Tasks({ navigate: _navigate }: Props) {
       .then(([t, p]) => {
         setTasks(t);
         setProjects(p);
+        setCompletions(getCompletions());
         setLoading(false);
       })
       .catch(() => setLoading(false));
@@ -86,9 +117,10 @@ export function Tasks({ navigate: _navigate }: Props) {
     setForm({
       title: "",
       description: "",
-      projectId: projects[0]?.id || "",
+      projectId: projects[0]?.id ?? "",
       status: "TODO",
       priority: "MEDIUM",
+      completion: 0,
     });
     setOpen(true);
   };
@@ -101,12 +133,17 @@ export function Tasks({ navigate: _navigate }: Props) {
       projectId: t.projectId,
       status: getKey(t.status),
       priority: getKey(t.priority),
+      completion: completions[t.id] ?? 0,
     });
     setOpen(true);
   };
 
   const handleSave = async () => {
     if (!actor || !form.title.trim()) return;
+    if (!editTask && !form.projectId) {
+      toast.error("Please select a project first");
+      return;
+    }
     setSaving(true);
     try {
       if (editTask) {
@@ -120,9 +157,10 @@ export function Tasks({ navigate: _navigate }: Props) {
           [],
           [],
         );
+        setCompletion(editTask.id, form.completion);
         toast.success("Task updated");
       } else {
-        await actor.createTask(
+        const created = await actor.createTask(
           form.projectId,
           form.title,
           form.description,
@@ -132,6 +170,7 @@ export function Tasks({ navigate: _navigate }: Props) {
           [],
           [],
         );
+        setCompletion(created.id, form.completion);
         toast.success("Task created");
       }
       setOpen(false);
@@ -145,9 +184,73 @@ export function Tasks({ navigate: _navigate }: Props) {
 
   const handleDelete = async (id: string) => {
     if (!actor) return;
-    await actor.deleteTask(id);
-    toast.success("Task deleted");
-    load();
+    try {
+      await actor.deleteTask(id);
+      toast.success("Task deleted");
+      load();
+    } catch {
+      toast.error("Failed to delete task");
+    }
+  };
+
+  // Inline status cycle
+  const cycleStatus = async (t: Task) => {
+    if (!actor) return;
+    const cur = getKey(t.status);
+    const idx = STATUS_ORDER.indexOf(cur as (typeof STATUS_ORDER)[number]);
+    const next = STATUS_ORDER[(idx + 1) % STATUS_ORDER.length];
+    try {
+      await actor.updateTask(
+        t.id,
+        t.title,
+        t.description,
+        { [next]: null } as TaskStatus,
+        t.priority,
+        t.assigneeId,
+        t.dueDate,
+        t.tags,
+      );
+      toast.success(`Status → ${next.replace("_", " ")}`);
+      load();
+    } catch {
+      toast.error("Failed to update status");
+    }
+  };
+
+  // Transfer task
+  const openTransfer = (t: Task) => {
+    setTransferTask(t);
+    const other = projects.find((p) => p.id !== t.projectId);
+    setTransferProjectId(other?.id ?? projects[0]?.id ?? "");
+  };
+
+  const doTransfer = async () => {
+    if (!actor || !transferTask || !transferProjectId) return;
+    if (transferProjectId === transferTask.projectId) {
+      toast.error("Task is already in that project");
+      return;
+    }
+    setTransferring(true);
+    try {
+      await actor.createTask(
+        transferProjectId,
+        transferTask.title,
+        transferTask.description,
+        transferTask.status,
+        transferTask.priority,
+        transferTask.assigneeId,
+        transferTask.dueDate,
+        transferTask.tags,
+      );
+      await actor.deleteTask(transferTask.id);
+      toast.success("Task transferred");
+      setTransferTask(null);
+      load();
+    } catch {
+      toast.error("Transfer failed");
+    } finally {
+      setTransferring(false);
+    }
   };
 
   const filtered = tasks.filter((t) => {
@@ -244,73 +347,108 @@ export function Tasks({ navigate: _navigate }: Props) {
                   Priority
                 </th>
                 <th className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase">
+                  Completion
+                </th>
+                <th className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase">
                   Created
                 </th>
                 <th className="px-4 py-3" />
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
-              {filtered.map((t) => (
-                <tr key={t.id} className="hover:bg-slate-50 transition-colors">
-                  <td className="px-4 py-3">
-                    <div className="font-medium text-slate-800 text-sm">
-                      {t.title}
-                    </div>
-                    {t.description && (
-                      <div className="text-xs text-slate-400 truncate max-w-xs">
-                        {t.description}
+              {filtered.map((t) => {
+                const pct = completions[t.id] ?? 0;
+                return (
+                  <tr
+                    key={t.id}
+                    className="hover:bg-slate-50 transition-colors"
+                  >
+                    <td className="px-4 py-3">
+                      <div className="font-medium text-slate-800 text-sm">
+                        {t.title}
                       </div>
-                    )}
-                  </td>
-                  <td className="px-4 py-3 text-sm text-slate-500">
-                    {getProjectName(t.projectId)}
-                  </td>
-                  <td className="px-4 py-3">
-                    <Badge
-                      className={`text-xs ${statusColors[getKey(t.status)] || ""}`}
-                    >
-                      {getKey(t.status).replace("_", " ")}
-                    </Badge>
-                  </td>
-                  <td className="px-4 py-3">
-                    <Badge
-                      className={`text-xs ${priorityColors[getKey(t.priority)] || ""}`}
-                    >
-                      {getKey(t.priority)}
-                    </Badge>
-                  </td>
-                  <td className="px-4 py-3 text-xs text-slate-400">
-                    {new Date(
-                      Number(t.createdAt) / 1_000_000,
-                    ).toLocaleDateString()}
-                  </td>
-                  <td className="px-4 py-3">
-                    <div className="flex gap-1">
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        className="h-7 w-7"
-                        onClick={() => openEdit(t)}
+                      {t.description && (
+                        <div className="text-xs text-slate-400 truncate max-w-xs">
+                          {t.description}
+                        </div>
+                      )}
+                    </td>
+                    <td className="px-4 py-3 text-sm text-slate-500">
+                      {getProjectName(t.projectId)}
+                    </td>
+                    <td className="px-4 py-3">
+                      <button
+                        type="button"
+                        title="Click to change status"
+                        onClick={() => cycleStatus(t)}
                       >
-                        <Edit2 className="h-3.5 w-3.5" />
-                      </Button>
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        className="h-7 w-7 text-red-400 hover:text-red-600"
-                        onClick={() => handleDelete(t.id)}
+                        <Badge
+                          className={`text-xs cursor-pointer hover:opacity-80 transition-opacity ${statusColors[getKey(t.status)] || ""}`}
+                        >
+                          {getKey(t.status).replace("_", " ")}
+                        </Badge>
+                      </button>
+                    </td>
+                    <td className="px-4 py-3">
+                      <Badge
+                        className={`text-xs ${priorityColors[getKey(t.priority)] || ""}`}
                       >
-                        <Trash2 className="h-3.5 w-3.5" />
-                      </Button>
-                    </div>
-                  </td>
-                </tr>
-              ))}
+                        {getKey(t.priority)}
+                      </Badge>
+                    </td>
+                    <td className="px-4 py-3 w-28">
+                      <div className="flex items-center gap-1.5">
+                        <Progress value={pct} className="h-1.5 flex-1" />
+                        <span className="text-xs text-slate-500 w-8 text-right">
+                          {pct}%
+                        </span>
+                      </div>
+                    </td>
+                    <td className="px-4 py-3 text-xs text-slate-400">
+                      {new Date(
+                        Number(t.createdAt) / 1_000_000,
+                      ).toLocaleDateString()}
+                    </td>
+                    <td className="px-4 py-3">
+                      <div className="flex gap-1">
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="h-7 w-7"
+                          title="Edit task"
+                          onClick={() => openEdit(t)}
+                        >
+                          <Edit2 className="h-3.5 w-3.5" />
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="h-7 w-7 text-blue-400 hover:text-blue-600"
+                          title="Transfer to another project"
+                          onClick={() => openTransfer(t)}
+                        >
+                          <ArrowLeftRight className="h-3.5 w-3.5" />
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="h-7 w-7 text-red-400 hover:text-red-600"
+                          title="Delete task"
+                          onClick={() => handleDelete(t.id)}
+                        >
+                          <Trash2 className="h-3.5 w-3.5" />
+                        </Button>
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         </div>
       )}
 
+      {/* Create / Edit Task Dialog */}
       <Dialog open={open} onOpenChange={setOpen}>
         <DialogContent>
           <DialogHeader>
@@ -396,6 +534,19 @@ export function Tasks({ navigate: _navigate }: Props) {
                 </Select>
               </div>
             </div>
+            <div>
+              <Label>Work Completion: {form.completion}%</Label>
+              <Slider
+                value={[form.completion]}
+                onValueChange={([v]) =>
+                  setForm((f) => ({ ...f, completion: v ?? 0 }))
+                }
+                min={0}
+                max={100}
+                step={5}
+                className="mt-2"
+              />
+            </div>
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setOpen(false)}>
@@ -403,6 +554,57 @@ export function Tasks({ navigate: _navigate }: Props) {
             </Button>
             <Button onClick={handleSave} disabled={saving}>
               {saving ? "Saving..." : editTask ? "Update" : "Create"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Transfer Task Dialog */}
+      <Dialog
+        open={!!transferTask}
+        onOpenChange={(o) => !o && setTransferTask(null)}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Transfer Task to Another Project</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3">
+            <p className="text-sm text-slate-600">
+              Task: <strong>{transferTask?.title}</strong>
+            </p>
+            <p className="text-xs text-slate-500">
+              Currently in: {getProjectName(transferTask?.projectId ?? "")}
+            </p>
+            <div>
+              <Label>Move to Project</Label>
+              <Select
+                value={transferProjectId}
+                onValueChange={setTransferProjectId}
+              >
+                <SelectTrigger className="mt-1">
+                  <SelectValue placeholder="Select target project" />
+                </SelectTrigger>
+                <SelectContent>
+                  {projects
+                    .filter((p) => p.id !== transferTask?.projectId)
+                    .map((p) => (
+                      <SelectItem key={p.id} value={p.id}>
+                        {p.name}
+                      </SelectItem>
+                    ))}
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setTransferTask(null)}>
+              Cancel
+            </Button>
+            <Button
+              onClick={doTransfer}
+              disabled={transferring || !transferProjectId}
+            >
+              {transferring ? "Transferring..." : "Transfer Task"}
             </Button>
           </DialogFooter>
         </DialogContent>

@@ -1,4 +1,3 @@
-import type { Identity } from "@icp-sdk/core/agent";
 import {
   BarChart2,
   Bell,
@@ -17,7 +16,8 @@ interface SidebarProps {
   currentPage: string;
   navigate: (p: Page) => void;
   onLogout: () => void;
-  identity: Identity;
+  userEmail: string;
+  userName: string;
 }
 
 const navItems = [
@@ -34,10 +34,12 @@ export function Sidebar({
   currentPage,
   navigate,
   onLogout,
-  identity,
+  userEmail,
+  userName,
 }: SidebarProps) {
-  const principal = identity.getPrincipal().toString();
-  const shortPrincipal = principal.slice(0, 5) + "..." + principal.slice(-3);
+  const initials = userName
+    ? userName.charAt(0).toUpperCase()
+    : userEmail.charAt(0).toUpperCase();
 
   return (
     <div className="w-60 bg-slate-900 flex flex-col h-full border-r border-slate-700/50 shrink-0">
@@ -80,13 +82,13 @@ export function Sidebar({
       <div className="p-3 border-t border-slate-700/50">
         <div className="flex items-center gap-3 px-3 py-2 rounded-lg bg-slate-800/50 mb-2">
           <div className="bg-blue-500 rounded-full h-7 w-7 flex items-center justify-center text-white text-xs font-bold shrink-0">
-            {shortPrincipal.charAt(0).toUpperCase()}
+            {initials}
           </div>
           <div className="min-w-0">
-            <div className="text-white text-xs font-medium truncate">User</div>
-            <div className="text-slate-500 text-xs truncate">
-              {shortPrincipal}
+            <div className="text-white text-xs font-medium truncate">
+              {userName}
             </div>
+            <div className="text-slate-500 text-xs truncate">{userEmail}</div>
           </div>
         </div>
         <button

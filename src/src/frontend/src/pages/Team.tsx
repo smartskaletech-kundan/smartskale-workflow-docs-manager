@@ -4,11 +4,11 @@ import type { Project } from "../backend";
 import { Card, CardContent } from "../components/ui/card";
 import { Skeleton } from "../components/ui/skeleton";
 import { useActor } from "../hooks/useActor";
-import { useInternetIdentity } from "../hooks/useInternetIdentity";
+import { useAuth } from "../hooks/useAuth";
 
 export function Team() {
   const { actor } = useActor();
-  const { identity } = useInternetIdentity();
+  const { user } = useAuth();
   const [projects, setProjects] = useState<Project[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -33,7 +33,6 @@ export function Team() {
     }
   }
   const members = Object.entries(memberMap);
-  const currentPrincipal = identity?.getPrincipal().toString();
 
   return (
     <div className="space-y-6">
@@ -59,12 +58,16 @@ export function Team() {
           <p className="text-slate-500">
             No team members yet. Create a project to get started.
           </p>
+          {user && (
+            <p className="text-slate-400 text-sm mt-2">
+              Logged in as: <span className="font-medium">{user.email}</span>
+            </p>
+          )}
         </div>
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
           {members.map(([principal, projectNames]) => {
             const short = principal.slice(0, 10) + "...";
-            const isMe = principal === currentPrincipal;
             return (
               <Card key={principal} className="border-0 shadow-sm">
                 <CardContent className="p-5">
@@ -76,27 +79,23 @@ export function Team() {
                       <div className="font-medium text-slate-900 text-sm truncate">
                         {short}
                       </div>
-                      {isMe && (
-                        <span className="text-xs bg-blue-100 text-blue-700 px-1.5 py-0.5 rounded-full">
-                          You
-                        </span>
-                      )}
                     </div>
                   </div>
                   <div className="space-y-1">
-                    <div className="text-xs text-slate-500 font-medium">
-                      Projects ({projectNames.length})
-                    </div>
-                    <div className="flex flex-wrap gap-1">
-                      {projectNames.map((pn) => (
-                        <span
-                          key={pn}
-                          className="text-xs bg-slate-100 text-slate-600 px-2 py-0.5 rounded-full"
-                        >
-                          {pn}
-                        </span>
-                      ))}
-                    </div>
+                    <div className="text-xs text-slate-500">Projects:</div>
+                    {projectNames.slice(0, 3).map((name) => (
+                      <div
+                        key={name}
+                        className="text-xs bg-blue-50 text-blue-700 px-2 py-0.5 rounded-full inline-block mr-1"
+                      >
+                        {name}
+                      </div>
+                    ))}
+                    {projectNames.length > 3 && (
+                      <span className="text-xs text-slate-400">
+                        +{projectNames.length - 3} more
+                      </span>
+                    )}
                   </div>
                 </CardContent>
               </Card>
